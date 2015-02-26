@@ -1825,3 +1825,9 @@ mkd_document(Document *p, char **res)
     return EOF;
 }
 
+
+void
+htmlify_mddog(Paragraph *p, char *block, char *arguments, MMIOT *f){
+  htmlify(p, block, arguments, f);
+}
+

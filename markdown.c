@@ -1344,3 +1344,271 @@ mkd_compile(Document *doc, DWORD flags)
     return 1;
 }
 
+
+/********** functions written below for MdDog ***********/
+void
+extract_raw(Line *ptr, char** res){
+  int length = 0;
+  Line *tmp = ptr;
+  char* buf;
+
+  while(tmp != NULL && tmp->text.size > 0){
+    length += tmp->text.size;
+    length += 1;  // '\n'
+    tmp = tmp->next;
+  }
+  length += 2;    //'\n\0'
+
+  buf = (char*)calloc(length, sizeof(char));
+  tmp = ptr;
+  length = 0;
+  while(tmp != NULL && tmp->text.size > 0){
+    memcpy(buf + length, tmp->text.text, tmp->text.size);
+    length += tmp->text.size;
+    buf[length] = '\n';
+    length++;
+    tmp = tmp->next;
+  }
+  buf[length++] = '\n';
+  buf[length] = '\0';
+
+  *res = buf;
+}
+
+void 
+extract_html(Line *ptr, MMIOT *f,char** res){
+  int length = 0;
+  Line *tmp;
+  char* buf;
+
+  int hdr_type, list_type, list_class, indent;
+  Line *r;
+  Paragraph *p = calloc(sizeof *p, 1);
+  p->text =ptr;
+
+  if ( iscode(ptr) ) {
+    p->typ = CODE;
+    if ( f->flags & MKD_1_COMPAT) {
+		/* HORRIBLE STANDARDS KLUDGE: the first line of every block
+		 * has trailing whitespace trimmed off.
+		 */
+		___mkd_tidy(&p->text->text);
+    }
+	    
+    ptr = codeblock(p);
+
+  } else if ( ishr(ptr) ) {
+    p->typ = HR;
+    r = ptr;
+    ptr = ptr->next;
+    ___mkd_freeLine(r);
+  }	else if ( list_class = islist(ptr, &indent, f->flags, &list_type) ) {
+    if ( list_class == DL ) {
+	  p->typ = DL;
+	  ptr = definition_block(p, indent, f, list_type);
+    } else {
+	  p->typ = list_type;
+	  ptr = enumerated_block(p, indent, f, list_class);
+    }
+  }	else if ( isquote(ptr) ) {
+    p->typ = QUOTE;
+    ptr = quoteblock(p, f->flags);
+    p->down = compile(p->text, 1, f);
+    p->text = 0;
+  } else if ( ishdr(ptr, &hdr_type) ) {
+    p->typ = HDR;
+    ptr = headerblock(p, hdr_type);
+  }	else {
+    p->typ = MARKUP;
+    ptr = textblock(p, 1, f->flags);
+    /* tables are a special kind of paragraph */
+    if ( actually_a_table(f, p->text) )
+	  p->typ = TABLE;
+  }
+
+  htmlify_mddog(p, 0, 0, f);
+  length = f->out.size;
+
+  buf = (char*)calloc(length + 1, sizeof(char));
+  memcpy((void*)buf, (void*)f->out.text, length);
+  buf[length] = '\0';
+
+  *res = (char*)buf;  
+}
+
+static Paragraph *
+compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num)
+{
+  ParagraphRoot d = { 0, 0 };
+  Paragraph *p = 0;
+  Line *r;
+  int para = toplevel;
+  int blocks = 0;
+  int hdr_type, list_type, list_class, indent;
+  int hitFlg = 0;
+  char *ret = NULL;
+
+  ptr = consume(ptr, &para);
+
+  while ( ptr ) {
+    if(blocks == num){
+      hitFlg = 1;
+      extract_html(ptr, f, &ret);
+      if(ret != NULL){
+        printf("%s", ret);
+        free(ret);
+      }
+      return T(d);
+    }
+
+	if ( iscode(ptr) ) {
+      p = Pp(&d, ptr, CODE);
+	    
+      if ( f->flags & MKD_1_COMPAT) {
+		/* HORRIBLE STANDARDS KLUDGE: the first line of every block
+		 * has trailing whitespace trimmed off.
+		 */
+		___mkd_tidy(&p->text->text);
+      }
+	    
+      ptr = codeblock(p);
+	}
+	else if ( ishr(ptr) ) {
+      p = Pp(&d, 0, HR);
+      r = ptr;
+      ptr = ptr->next;
+      ___mkd_freeLine(r);
+	}
+	else if ( list_class = islist(ptr, &indent, f->flags, &list_type) ) {
+      if ( list_class == DL ) {
+		p = Pp(&d, ptr, DL);
+		ptr = definition_block(p, indent, f, list_type);
+      }
+      else {
+		p = Pp(&d, ptr, list_type);
+		ptr = enumerated_block(p, indent, f, list_class);
+      }
+	}
+	else if ( isquote(ptr) ) {
+      p = Pp(&d, ptr, QUOTE);
+      ptr = quoteblock(p, f->flags);
+      p->down = compile(p->text, 1, f);
+      p->text = 0;
+	}
+	else if ( ishdr(ptr, &hdr_type) ) {
+      p = Pp(&d, ptr, HDR);
+      ptr = headerblock(p, hdr_type);
+	}
+	else {
+      p = Pp(&d, ptr, MARKUP);
+      ptr = textblock(p, toplevel, f->flags);
+      /* tables are a special kind of paragraph */
+      if ( actually_a_table(f, p->text) )
+		p->typ = TABLE;
+	}
+
+	if ( (para||toplevel) && !p->align )
+      p->align = PARA;
+
+	blocks++;
+	para = toplevel || (blocks > 1);
+	ptr = consume(ptr, &para);
+
+	if ( para && !p->align )
+      p->align = PARA;
+
+  }
+  return T(d);
+}
+
+static Paragraph *
+mddog_compile_document(Line *ptr, MMIOT *f, int num)
+{
+  ParagraphRoot d = { 0, 0 };
+  ANCHOR(Line) source = { 0, 0 };
+  Paragraph *p = 0;
+  struct kw *tag;
+  int eaten, unclosed;
+
+  while ( ptr ) {
+	if ( !(f->flags & MKD_NOHTML) && (tag = isopentag(ptr)) ) {
+      int blocktype;
+      /* If we encounter a html/style block, compile and save all
+       * of the cached source BEFORE processing the html/style.
+       */
+      if ( T(source) ) {
+		E(source)->next = 0;
+		p = Pp(&d, 0, SOURCE);
+		p->down = compile_mddog(T(source), 1, f, num);
+		T(source) = E(source) = 0;
+      }
+	    
+      if ( f->flags & MKD_NOSTYLE )
+		blocktype = HTML;
+      else
+		blocktype = strcmp(tag->id, "STYLE") == 0 ? STYLE : HTML;
+      p = Pp(&d, ptr, blocktype);
+      ptr = htmlblock(p, tag, &unclosed);
+      if ( unclosed ) {
+		p->typ = SOURCE;
+		p->down = compile_mddog(p->text, 1, f, num);
+		p->text = 0;
+      }
+	}
+	else if ( isfootnote(ptr) ) {
+      /* footnotes, like cats, sleep anywhere; pull them
+       * out of the input stream and file them away for
+       * later processing
+       */
+      ptr = consume(addfootnote(ptr, f), &eaten);
+	}
+	else {
+      /* source; cache it up to wait for eof or the
+       * next html/style block
+       */
+      ATTACH(source,ptr);
+      ptr = ptr->next;
+	}
+  }
+  if ( T(source) ) {
+	/* if there's any cached source at EOF, compile
+	 * it now.
+	 */
+	E(source)->next = 0;
+	p = Pp(&d, 0, SOURCE);
+	p->down = compile_mddog(T(source), 1, f, num);
+  }
+  return T(d);
+}
+
+int
+mddog_compile(Document *doc, DWORD flags, int num)
+{
+    if ( !doc )
+	return 0;
+
+    if ( doc->compiled )
+	return 1;
+
+    doc->compiled = 1;
+    memset(doc->ctx, 0, sizeof(MMIOT) );
+    doc->ctx->ref_prefix= doc->ref_prefix;
+    doc->ctx->cb        = &(doc->cb);
+    doc->ctx->flags     = flags & USER_FLAGS;
+    CREATE(doc->ctx->in);
+    doc->ctx->footnotes = malloc(sizeof doc->ctx->footnotes[0]);
+    doc->ctx->footnotes->reference = 0;
+    CREATE(doc->ctx->footnotes->note);
+
+    mkd_initialize();
+
+    doc->code = mddog_compile_document(T(doc->content), doc->ctx, num);
+    qsort(T(doc->ctx->footnotes->note), S(doc->ctx->footnotes->note),
+		        sizeof T(doc->ctx->footnotes->note)[0],
+			           (stfu)__mkd_footsort);
+    memset(&doc->content, 0, sizeof doc->content);
+    return 1;
+}
+
+
+
