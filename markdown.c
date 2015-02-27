@@ -1622,7 +1622,7 @@ mddog_compile_document(Line *ptr, MMIOT *f, int num, out_type _type)
 }
 
 char *
-mddog_get_paragraph_html(const char *text, DWORD flags, int num)
+mddog_get_paragraph_html(const char *text, DWORD flags, int num, int *pLength)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL ){
@@ -1639,12 +1639,13 @@ mddog_get_paragraph_html(const char *text, DWORD flags, int num)
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_html);
     mkd_cleanup(doc);
 
+    *pLength = g_length;
     return g_ret;
 }
 
 
 char *
-mddog_get_paragraph_raw(const char *text, DWORD flags, int num)
+mddog_get_paragraph_raw(const char *text, DWORD flags, int num, int *pLength)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL ){
@@ -1661,11 +1662,12 @@ mddog_get_paragraph_raw(const char *text, DWORD flags, int num)
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
     mkd_cleanup(doc);
 
+    *pLength = g_length;
     return g_ret;
 }
 
 char * 
-mddog_alter_paragraph(const char *text, DWORD flags, int num, char *str)
+mddog_alter_paragraph(const char *text, DWORD flags, int num, char *str, int *pLength)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL )    return 0;
@@ -1683,6 +1685,7 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, char *str)
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
     mkd_cleanup(doc);
 
+    *pLength = g_length;
     return g_ret;
 }
 
