@@ -1354,8 +1354,16 @@ char* g_str = NULL;
 char* g_ret = NULL;
 int   g_length = 0;
 
-char *
-extract_raw(Line *ptr, int* pLength){
+void
+mddog_cleanup(){
+  if( g_ret != NULL ){
+    free(g_ret);
+    g_ret = NULL;
+  }
+}
+
+int
+extract_raw(Line *ptr, char **ppRet){
   int length = 0;
   Line *tmp = ptr;
   char* buf = NULL;
@@ -1367,8 +1375,7 @@ extract_raw(Line *ptr, int* pLength){
   }
   length += 2;    //'\n\0'
 
-  *pLength = length;
-  buf = (char*)calloc(*pLength, sizeof(char));
+  buf = (char*)calloc(length, sizeof(char));
   tmp = ptr;
   length = 0;
   while(tmp != NULL && tmp->text.size > 0){
@@ -1379,15 +1386,17 @@ extract_raw(Line *ptr, int* pLength){
     tmp = tmp->next;
   }
   buf[length++] = '\n';
-  buf[length] = '\0';
+  buf[length++] = '\0';
 
-  return buf;
+  *ppRet = buf;
+  return length;
 }
 
-char *
-extract_html(Line *ptr, MMIOT *f, int *pLength){
+int
+extract_html(Line *ptr, MMIOT *f, char **ppRet){
   Line *tmp;
-  char* buf = NULL;
+  char *buf = NULL;
+  int   length;
 
   int hdr_type, list_type, list_class, indent;
   Line *r;
@@ -1434,16 +1443,20 @@ extract_html(Line *ptr, MMIOT *f, int *pLength){
 	  p->typ = TABLE;
   }
 
-  htmlify_mddog(p, 0, 0, f);
-  *pLength = f->out.size + 1;
+  if ( !p->align )
+    p->align = PARA;
 
-  if( *pLength > 0 ){
-    buf = (char*)calloc(*pLength, sizeof(char));
-    memcpy((void*)buf, (void*)f->out.text, *pLength - 1);
-    buf[*pLength - 1] = '\0';
+  htmlify_mddog(p, 0, 0, f);
+  length = f->out.size + 1;
+
+  if( length > 0 ){
+    buf = (char*)calloc(length, sizeof(char));
+    memcpy((void*)buf, (void*)f->out.text, length - 1);
+    buf[length - 1] = '\0';
   }
 
-  return buf;
+  *ppRet = buf;
+  return length;
 }
 
 static Paragraph *
@@ -1458,7 +1471,7 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
   int hitFlg = 0;
   char *ret = NULL;
   char *tmp = NULL;
-  int memLeng;
+  int mem_leng;
 
   ptr = consume(ptr, &para);
 
@@ -1466,36 +1479,39 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
     if( g_style == _style_get ){
       if(blocks == num){
         hitFlg = 1;
-        if( _type == _out_html ){      //HTML出力
-          g_ret = extract_html(ptr, f, &memLeng);
-        }else if( _type == _out_raw ){ //RAW出力
-          g_ret = extract_raw(ptr, &memLeng);
+        if( _type == _out_html ){         // PRINT HTML
+          mem_leng = extract_html(ptr, f, &g_ret);
+        }else{// if( _type == _out_raw ){ // PRINT RAW
+          mem_leng = extract_raw(ptr, &g_ret);
         }
+        g_length = mem_leng;
         return T(d);
       }
-    }else if( g_style == _style_alter ){
+    }else if( g_style == _style_alter ){  // ALTER PARAGRAPH
       if( blocks == num ){
         if( g_str != NULL ){
-          memLeng = strlen(g_str) + 1;
+          mem_leng = strlen(g_str) + 1;     // include '\0'
           tmp = g_ret;
-          g_ret = (char*)calloc(--g_length + memLeng, sizeof(char));
+          g_ret = (char*)calloc(--g_length + mem_leng + 1, sizeof(char));
           memcpy((void*)g_ret, (void*)tmp, g_length);
           free(tmp);
-          memcpy((void*)(g_ret + g_length), (void*)g_str, memLeng);
-          g_length += memLeng;
+          memcpy((void*)(g_ret + g_length), (void*)g_str, mem_leng);
+          g_ret[g_length + mem_leng]     = '\n';
+          g_ret[g_length + mem_leng + 1] = '\0';
+          g_length += ++mem_leng;
         }
       }else{
-        ret = extract_raw(ptr, &memLeng);
-        if( g_ret == NULL ){
-          g_ret = (char*)calloc(memLeng, sizeof(char));
+        mem_leng = extract_raw(ptr, &ret);
+        if( g_ret == NULL && g_length == 0){
+          g_ret = (char*)calloc(mem_leng, sizeof(char));
         }else{
           tmp = g_ret;
-          g_ret = (char*)calloc(--g_length + memLeng, sizeof(char));
+          g_ret = (char*)calloc(--g_length + mem_leng, sizeof(char));
           memcpy((void*)g_ret, (void*)tmp, g_length);
           free(tmp);
         }
-        memcpy((void*)(g_ret + g_length), (void*)ret, memLeng);
-        g_length += memLeng;
+        memcpy((void*)(g_ret + g_length), (void*)ret, mem_leng);
+        g_length += mem_leng;
         free(ret);
         ret = NULL;
       }
@@ -1621,13 +1637,16 @@ mddog_compile_document(Line *ptr, MMIOT *f, int num, out_type _type)
   return T(d);
 }
 
-char *
-mddog_get_paragraph_html(const char *text, DWORD flags, int num, int *pLength)
+int
+mddog_get_paragraph_html(const char *text, DWORD flags, int num, char **ppRet)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL ){
         return 0;
     }
+
+    g_length = 0;
+    g_ret    = NULL;
 
     memset(doc->ctx, 0, sizeof(MMIOT) );
     doc->ctx->ref_prefix= doc->ref_prefix;
@@ -1637,21 +1656,25 @@ mddog_get_paragraph_html(const char *text, DWORD flags, int num, int *pLength)
 
     mkd_initialize();
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_html);
+    memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
-    *pLength = g_length;
-    return g_ret;
+    *ppRet = g_ret;
+    return g_length;
 }
 
 
-char *
-mddog_get_paragraph_raw(const char *text, DWORD flags, int num, int *pLength)
+int
+mddog_get_paragraph_raw(const char *text, DWORD flags, int num, char **ppRet)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL ){
         return 0;
     }
 
+    g_length = 0;
+    g_ret    = NULL;
+
     memset(doc->ctx, 0, sizeof(MMIOT) );
     doc->ctx->ref_prefix= doc->ref_prefix;
     doc->ctx->cb        = &(doc->cb);
@@ -1660,20 +1683,23 @@ mddog_get_paragraph_raw(const char *text, DWORD flags, int num, int *pLength)
 
     mkd_initialize();
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
+    memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
-    *pLength = g_length;
-    return g_ret;
+    *ppRet = g_ret;
+    return g_length;
 }
 
-char * 
-mddog_alter_paragraph(const char *text, DWORD flags, int num, char *str, int *pLength)
+int
+mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, char **ppRet)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL )    return 0;
 
-    g_style = _style_alter;
-    g_str = str;
+    g_style  = _style_alter;
+    g_str    = str;
+    g_length = 0;
+    g_ret    = NULL;
 
     memset(doc->ctx, 0, sizeof(MMIOT) );
     doc->ctx->ref_prefix= doc->ref_prefix;
@@ -1683,9 +1709,10 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, char *str, int *pL
 
     mkd_initialize();
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
+    memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
-    *pLength = g_length;
-    return g_ret;
+    *ppRet = g_ret;
+    return g_length;
 }
 
