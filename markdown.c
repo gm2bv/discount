@@ -1362,6 +1362,9 @@ mddog_cleanup(){
   }
 }
 
+/*
+ * 'return value' doesn't include size of '\0'
+ */
 int
 extract_raw(Line *ptr, char **ppRet){
   int length = 0;
@@ -1386,12 +1389,15 @@ extract_raw(Line *ptr, char **ppRet){
     tmp = tmp->next;
   }
   buf[length++] = '\n';
-  buf[length++] = '\0';
+  buf[length] = '\0';
 
   *ppRet = buf;
   return length;
 }
 
+/*
+ * 'return value' doesn't include size of '\0'
+ */
 int
 extract_html(Line *ptr, MMIOT *f, char **ppRet){
   Line *tmp;
@@ -1447,12 +1453,12 @@ extract_html(Line *ptr, MMIOT *f, char **ppRet){
     p->align = PARA;
 
   htmlify_mddog(p, 0, 0, f);
-  length = f->out.size + 1;
+  length = f->out.size;
 
   if( length > 0 ){
-    buf = (char*)calloc(length, sizeof(char));
-    memcpy((void*)buf, (void*)f->out.text, length - 1);
-    buf[length - 1] = '\0';
+    buf = (char*)calloc(length + 1, sizeof(char));  // include '\0'
+    memcpy((void*)buf, (void*)f->out.text, length);
+    buf[length] = '\0';
   }
 
   *ppRet = buf;
@@ -1489,29 +1495,34 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
       }
     }else if( g_style == _style_alter ){  // ALTER PARAGRAPH
       if( blocks == num ){
-        if( g_str != NULL ){
-          mem_leng = strlen(g_str) + 1;     // include '\0'
-          tmp = g_ret;
-          g_ret = (char*)calloc(--g_length + mem_leng + 1, sizeof(char));
-          memcpy((void*)g_ret, (void*)tmp, g_length);
-          free(tmp);
+        if( g_str != NULL && strlen(g_str) > 0){
+          mem_leng = strlen(g_str);
+          if( g_ret == NULL && g_length == 0){
+            g_ret = (char*)calloc(mem_leng + 2, sizeof(char));
+          }else{
+            tmp = g_ret;
+            g_ret = (char*)calloc(g_length + mem_leng + 2, sizeof(char));
+            memcpy((void*)g_ret, (void*)tmp, g_length);
+            free(tmp);
+          }
           memcpy((void*)(g_ret + g_length), (void*)g_str, mem_leng);
-          g_ret[g_length + mem_leng]     = '\n';
-          g_ret[g_length + mem_leng + 1] = '\0';
-          g_length += ++mem_leng;
+          g_ret[g_length + mem_leng++] = '\n';
+          g_ret[g_length + mem_leng] = '\0';
+          g_length += mem_leng;
         }
       }else{
         mem_leng = extract_raw(ptr, &ret);
         if( g_ret == NULL && g_length == 0){
-          g_ret = (char*)calloc(mem_leng, sizeof(char));
+          g_ret = (char*)calloc(mem_leng + 1, sizeof(char));
         }else{
           tmp = g_ret;
-          g_ret = (char*)calloc(--g_length + mem_leng, sizeof(char));
+          g_ret = (char*)calloc(g_length + mem_leng + 1, sizeof(char));
           memcpy((void*)g_ret, (void*)tmp, g_length);
           free(tmp);
         }
         memcpy((void*)(g_ret + g_length), (void*)ret, mem_leng);
         g_length += mem_leng;
+        *(g_ret + g_length) = '\0';
         free(ret);
         ret = NULL;
       }
@@ -1659,6 +1670,11 @@ mddog_get_paragraph_html(const char *text, DWORD flags, int num, char **ppRet)
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
+    if( g_ret == NULL ){
+        g_ret = calloc(1, sizeof(char));
+        *g_ret = '\0';
+        g_length = 1;
+    }
     *ppRet = g_ret;
     return g_length;
 }
@@ -1686,6 +1702,11 @@ mddog_get_paragraph_raw(const char *text, DWORD flags, int num, char **ppRet)
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
+    if( g_ret == NULL ){
+        g_ret = calloc(1, sizeof(char));
+        *g_ret = '\0';
+        g_length = 1;
+    }
     *ppRet = g_ret;
     return g_length;
 }
@@ -1712,6 +1733,11 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, c
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
+    if( g_ret == NULL ){
+        g_ret = calloc(1, sizeof(char));
+        *g_ret = '\0';
+        g_length = 1;
+    }
     *ppRet = g_ret;
     return g_length;
 }
