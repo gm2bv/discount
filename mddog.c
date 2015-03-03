@@ -19,10 +19,11 @@ int main(int argc, char* argv[])
   char *ret;
   int length;
   char text[] = "TITLE\n----\n\n- LIST1\n- LIST2\n\nHOGE1\n**HOGE2**\nHOGE3\n\n## SUB-TITLE\n";
+  //  char text[] = "";
 
   char str[] = "insert 2 lines\nhogehoge\n\n";
   mkd_flag_t flags = MKD_NOHEADER || MKD_NOPANTS;
-  int num = 3;
+  int num = 0;
 
   /* 指定の段落の生データを返す 　　　　　　　　　　　　　*/
   //length = mddog_get_paragraph_raw(text, flags, num, &ret);
@@ -32,8 +33,8 @@ int main(int argc, char* argv[])
  
   /* 指定の段落を任意の文字列に入れ替えたデータを返す     */
   /* 任意の文字列がNULLだとその段落を削除したデータを返す */
-  //  length = mddog_alter_paragraph(text, flags, num, str, &ret);
-  length = mddog_alter_paragraph(text, flags, num, NULL, &ret);
+  length = mddog_alter_paragraph(text, flags, num, str, &ret);
+  //length = mddog_alter_paragraph(text, flags, num, NULL, &ret);
   
   printf("%s\n", text);
   printf("===================\n");

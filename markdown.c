@@ -1729,7 +1729,14 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, c
     CREATE(doc->ctx->in);
 
     mkd_initialize();
-    doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
+    if( T(doc->content) != NULL ){
+        doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
+    }else if( str != NULL && strlen(str) > 0 ){
+      g_length = strlen(str);
+      g_ret = (char*)calloc(g_length + 1, sizeof(char));
+      memcpy((void*)g_ret, (void*)str, g_length);
+      *(g_ret + g_length) = '\0';
+    }
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
 
