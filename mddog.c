@@ -11,7 +11,11 @@
 
 char *pgm = "mddog";
 
-//typedef MMIOT void;
+typedef struct _mddog_paragraph{
+  char *text;
+  int length;
+  struct _mddog_paragraph *next;
+} MDDOG_PARAGRAPH;
 
 
 int main(int argc, char* argv[])
@@ -24,6 +28,7 @@ int main(int argc, char* argv[])
   char str[] = "insert 2 lines\nhogehoge\n\n";
   mkd_flag_t flags = MKD_NOHEADER || MKD_NOPANTS;
   int num = 0;
+  MDDOG_PARAGRAPH *para;
 
   /* 指定の段落の生データを返す 　　　　　　　　　　　　　*/
   //length = mddog_get_paragraph_raw(text, flags, num, &ret);
@@ -35,11 +40,19 @@ int main(int argc, char* argv[])
   /* 任意の文字列がNULLだとその段落を削除したデータを返す */
   length = mddog_alter_paragraph(text, flags, num, str, &ret);
   //length = mddog_alter_paragraph(text, flags, num, NULL, &ret);
-  
+
   printf("%s\n", text);
   printf("===================\n");
+  /*
   if( ret != NULL ){
     printf("%s\n", ret);
+  }
+*/
+
+  para = mddog_paragraph(text, flags);
+  while( para != NULL ){
+    printf("%s\n", para->text);
+    para = para->next;
   }
 
   mddog_cleanup();
