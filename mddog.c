@@ -49,7 +49,7 @@ int main(int argc, char* argv[])
   }
 */
 
-  para = mddog_paragraph(text, flags);
+  mddog_paragraphs(text, flags, &para);
   while( para != NULL ){
     printf("%s\n", para->text);
     para = para->next;

@@ -1797,8 +1797,8 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, c
     return g_length;
 }
 
-MDDOG_PARAGRAPH *
-mddog_paragraph(const char *text, DWORD flags){
+void
+mddog_paragraphs(const char *text, DWORD flags, MDDOG_PARAGRAPH **ppRet){
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL ){
         return 0;
@@ -1816,6 +1816,6 @@ mddog_paragraph(const char *text, DWORD flags){
     doc->code = mddog_compile_document(T(doc->content), doc->ctx, 0, _out_paragraph);
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
-    return g_mddog;
+    *ppRet =  g_mddog;
 }
 
