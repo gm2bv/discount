@@ -1378,34 +1378,150 @@ mddog_cleanup(){
   }
 }
 
+int
+_mem_buffer(char **pptr, int length, Line* text){
+  char *buf = *pptr;
+  char *buf_tmp;
+  int ret;
+
+  if( buf == NULL && length == 0 ){
+    buf = (char*)calloc(text->text.size + 2, sizeof(char));
+  }else{
+    buf_tmp = (char*)calloc(length + text->text.size + 2, sizeof(char));
+    memcpy(buf_tmp, buf, length);
+    free(buf);
+    buf = buf_tmp;
+  }
+  memcpy((buf + length), text->text.text, text->text.size);
+  buf[length + text->text.size] = '\n';
+  ret = length + (text->text.size) + 1;
+
+  *pptr = buf;
+  return ret;
+}
+
+
 /*
  * 'return value' doesn't include size of '\0'
  */
 int
-extract_raw(Line *ptr, char **ppRet){
+extract_raw(Line *ptr, MMIOT *f, char **ppRet){
   int length = 0;
   Line *tmp = ptr;
   char* buf = NULL;
+  char *buf_tmp;;
 
-  while(tmp != NULL && tmp->text.size > 0){
-    length += tmp->text.size;
-    length += 1;  // '\n'
-    tmp = tmp->next;
-  }
-  length += 2;    //'\n\0'
+  int list_class, indent, list_type;
+  int hdr_type;
 
-  buf = (char*)calloc(length, sizeof(char));
-  tmp = ptr;
-  length = 0;
-  while(tmp != NULL && tmp->text.size > 0){
-    memcpy(buf + length, tmp->text.text, tmp->text.size);
-    length += tmp->text.size;
-    buf[length] = '\n';
-    length++;
-    tmp = tmp->next;
+  //When this is a list_style,
+  list_class = islist(ptr, &indent, f->flags, &list_type);
+  if( list_class == AL ){
+      ParagraphRoot d = {0, 0};
+	  Paragraph *p = Pp(&d, ptr, list_type);  //!attention : third-param
+      Line *inner = NULL;
+      int z;
+      Line *q, *text;
+      //	  ptr = enumerated_block(p, indent, f, list_class);
+
+      q = p->text;
+      while (( text = q )) {
+        length = _mem_buffer(&buf, length, text);
+
+        p = Pp(&d, text, LISTITEM);
+	    text = listitem(p, indent, f->flags, 0);
+
+        inner = p->text;
+        while( inner->next != NULL ){
+          inner = inner->next;
+          length = _mem_buffer(&buf, length, inner);
+        }
+
+	    if ( (q = skipempty(text)) == 0
+             || islist(q, &indent, f->flags, &z) != list_class ){
+	      break;
+        }
+      }
+  }else if( list_class == DL ){
+      ParagraphRoot d = {0, 0};
+	  Paragraph *p = Pp(&d, ptr, list_class);  // !!attention : third-param
+      Line *q, *labels, *text = 0;
+      int z, kind;
+
+      q = p->text;
+      while( (labels = q) ){
+        if( (q = isdefinition(labels, &z, &kind)) == 0 ){
+          break;
+        }
+        if( q != labels ){
+          length = _mem_buffer(&buf, length, labels);
+        }
+        length = _mem_buffer(&buf, length, q);
+        if( (text = skipempty(q->next)) == 0 ){
+          break;
+        }
+      dd_block:
+        p = Pp(&d, text, LISTITEM);
+        //        text = listitem(p, indent, f->flags, (kind==2)?is_extra_dd:0);
+
+        Line *_t, *_q;
+        int clip = indent;
+        int _z;
+
+        for( _t=p->text; ; _t=_q ){
+          if( indent > 4 ) indent = 4;
+          if( (_q = skipempty(_t->next)) == 0 ){
+            text = 0;
+            break;
+          }
+          length = _mem_buffer(&buf, length, _t);
+          if( _q != _t->next ){
+            if( _q->dle < indent ){
+              text = _t->next;
+              break;
+            }
+            indent = clip?clip:2;
+          }
+          if( (_q->dle < indent)
+              && (ishr(_q)
+                  || islist(_q, &_z, f->flags,&_z)
+                  || (kind == 2 && is_extra_dd(_q)))
+              && !issetext(_q, &_z) ){
+            text = _t->next;
+              break;
+          }
+          //          length = _mem_buffer(&buf, length, _t);
+        }
+
+        if( (q = skipempty(text)) == 0 ){
+          break;
+        }
+        if( kind == 2 && is_extra_dd(q) ){
+          goto dd_block;
+        }
+      }
+  }else{
+
+    while(tmp != NULL && tmp->text.size > 0){
+      length += tmp->text.size;
+      length += 1;  // '\n'
+      tmp = tmp->next;
+    }
+    length += 2;    //'\n\0'
+
+    buf = (char*)calloc(length, sizeof(char));
+    tmp = ptr;
+    length = 0;
+    while(tmp != NULL && tmp->text.size > 0){
+      memcpy(buf + length, tmp->text.text, tmp->text.size);
+      length += tmp->text.size;
+      buf[length] = '\n';
+      length++;
+      tmp = tmp->next;
+    }
+    buf[length++] = '\n';
+    buf[length] = '\0';
   }
-  buf[length++] = '\n';
-  buf[length] = '\0';
 
   *ppRet = buf;
   return length;
@@ -1434,32 +1550,32 @@ extract_html(Line *ptr, MMIOT *f, char **ppRet){
 		___mkd_tidy(&p->text->text);
     }
 	    
-    ptr = codeblock(p);
+    codeblock(p);
 
   } else if ( ishr(ptr) ) {
     p->typ = HR;
     r = ptr;
-    ptr = ptr->next;
+    //    ptr = ptr->next;
     ___mkd_freeLine(r);
   }	else if ( list_class = islist(ptr, &indent, f->flags, &list_type) ) {
     if ( list_class == DL ) {
 	  p->typ = DL;
-	  ptr = definition_block(p, indent, f, list_type);
+	  definition_block(p, indent, f, list_type);
     } else {
 	  p->typ = list_type;
-	  ptr = enumerated_block(p, indent, f, list_class);
+	  enumerated_block(p, indent, f, list_class);
     }
   }	else if ( isquote(ptr) ) {
     p->typ = QUOTE;
-    ptr = quoteblock(p, f->flags);
+    quoteblock(p, f->flags);
     p->down = compile(p->text, 1, f);
     p->text = 0;
   } else if ( ishdr(ptr, &hdr_type) ) {
     p->typ = HDR;
-    ptr = headerblock(p, hdr_type);
+    headerblock(p, hdr_type);
   }	else {
     p->typ = MARKUP;
-    ptr = textblock(p, 1, f->flags);
+    textblock(p, 1, f->flags);
     /* tables are a special kind of paragraph */
     if ( actually_a_table(f, p->text) )
 	  p->typ = TABLE;
@@ -1482,14 +1598,19 @@ extract_html(Line *ptr, MMIOT *f, char **ppRet){
 }
 
 void
-set_paragraph(Line *ptr, int num, int blocks)
+set_paragraph(Line *ptr, MMIOT *f,int num, int blocks)
 {
     char *ret = NULL;
     char *tmp = NULL;
     int mem_leng;
+    Line line;
 
     if( blocks == num ){
         if( g_str != NULL && strlen(g_str) > 0){
+            line.text.text = g_str;
+            line.text.size = strlen(g_str);
+            g_length = _mem_buffer(&g_ret, g_length, &line);
+            /*
             mem_leng = strlen(g_str);
             if( g_ret == NULL && g_length == 0){
                 g_ret = (char*)calloc(mem_leng + 2, sizeof(char));
@@ -1503,9 +1624,15 @@ set_paragraph(Line *ptr, int num, int blocks)
             g_ret[g_length + mem_leng++] = '\n';
             g_ret[g_length + mem_leng] = '\0';
             g_length += mem_leng;
+            */
         }
     }else{
-        mem_leng = extract_raw(ptr, &ret);
+        mem_leng = extract_raw(ptr, f, &ret);
+
+        line.text.text = ret;
+        line.text.size = mem_leng;
+        g_length = _mem_buffer(&g_ret, g_length, &line);
+        /*
         if( g_ret == NULL && g_length == 0){
             g_ret = (char*)calloc(mem_leng + 1, sizeof(char));
         }else{
@@ -1517,19 +1644,21 @@ set_paragraph(Line *ptr, int num, int blocks)
         memcpy((void*)(g_ret + g_length), (void*)ret, mem_leng);
         g_length += mem_leng;
         *(g_ret + g_length) = '\0';
+        */
+
         free(ret);
         ret = NULL;
     }
 }
 
 void
-set_mddog_paragraph(Line *ptr)
+set_mddog_paragraph(Line *ptr, MMIOT *f)
 {
     char *ret;
     int mem_leng;
     static MDDOG_PARAGRAPH *md_para = NULL;
 
-    mem_leng = extract_raw(ptr, &ret);
+    mem_leng = extract_raw(ptr, f, &ret);
 
     if( md_para == NULL ){
         md_para = (MDDOG_PARAGRAPH*)calloc(sizeof(MDDOG_PARAGRAPH), 1);
@@ -1565,15 +1694,15 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
         if( _type == _out_html ){            // OUTPUT HTML
           mem_leng = extract_html(ptr, f, &g_ret);
         }else{// if( _type == _out_raw ){    // OUTPUT RAW
-          mem_leng = extract_raw(ptr, &g_ret);
+          mem_leng = extract_raw(ptr, f, &g_ret);
         }
         g_length = mem_leng;
         return T(d);
       }
     }else if( g_style == _style_alter ){     // ALTER PARAGRAPH
-        set_paragraph(ptr, num, blocks);
+      set_paragraph(ptr, f, num, blocks);
     }else if( g_style == _style_paragraph ){ // OUTPUT PARAGRAPH
-      set_mddog_paragraph(ptr);
+      set_mddog_paragraph(ptr, f);
     }
 
 	if ( iscode(ptr) ) {
