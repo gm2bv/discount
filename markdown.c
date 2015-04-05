@@ -1400,6 +1400,103 @@ _mem_buffer(char **pptr, int length, Line* text){
   return ret;
 }
 
+/*
+ * inspired from 'enumerated_block'
+ * by yhori 2015/04/05
+ */
+static Line *
+insert_raw_list_al(Paragraph *top, int indent, DWORD flags, int list_class)
+{
+    ParagraphRoot d = {0, 0};
+    Paragraph *p;
+    Line *q = top->text, *text;
+    Line *inner = NULL;
+    int z;
+
+    while (( text = q )) {
+        g_length = _mem_buffer(&g_ret, g_length, text);
+
+        p = Pp(&d, text, LISTITEM);
+	    text = listitem(p, indent, flags, 0);
+
+        inner = p->text;
+        while( inner->next != NULL ){
+          inner = inner->next;
+          g_length = _mem_buffer(&g_ret, g_length, inner);
+        }
+
+	    if ( (q = skipempty(text)) == 0
+             || islist(q, &indent, flags, &z) != list_class ){
+	      break;
+        }
+    }
+
+    return text;
+}
+
+/*
+ * inspired from 'definition_block'
+ * by yhori 2015/04/05
+ */
+static Line*
+insert_raw_list_dl(Paragraph* top, int indent, DWORD flags, int list_type){
+    ParagraphRoot d = {0, 0};
+    Paragraph *p;
+    Line *q = top->text, *text = 0, *labels;
+    int z;
+
+    while( (labels = q) ){
+        if( (q = isdefinition(labels, &z, &list_type)) == 0 ){
+          break;
+        }
+        if( q != labels ){
+          g_length = _mem_buffer(&g_ret, g_length, labels);
+        }
+        g_length = _mem_buffer(&g_ret, g_length, q);
+        if( (text = skipempty(q->next)) == 0 ){
+          break;
+        }
+      dd_block:
+        p = Pp(&d, text, LISTITEM);
+        //        text = listitem(p, indent, f->flags, (kind==2)?is_extra_dd:0);
+
+        Line *_t, *_q;
+        int clip = indent;
+        int _z;
+
+        for( _t=p->text; ; _t=_q ){
+          if( indent > 4 ) indent = 4;
+          if( (_q = skipempty(_t->next)) == 0 ){
+            text = 0;
+            break;
+          }
+          g_length = _mem_buffer(&g_ret, g_length, _t);
+          if( _q != _t->next ){
+            if( _q->dle < indent ){
+              text = _t->next;
+              break;
+            }
+            indent = clip?clip:2;
+          }
+          if( (_q->dle < indent)
+              && (ishr(_q)
+                  || islist(_q, &_z, flags, &_z)
+                  || (list_type == 2 && is_extra_dd(_q)))
+              && !issetext(_q, &_z) ){
+            text = _t->next;
+              break;
+          }
+        }
+
+        if( (q = skipempty(text)) == 0 ){
+          break;
+        }
+        if( list_type == 2 && is_extra_dd(q) ){
+          goto dd_block;
+        }
+    }
+    return text;
+}
 
 /*
  * 'return value' doesn't include size of '\0'
@@ -1418,7 +1515,7 @@ extract_raw(Line *ptr, MMIOT *f, char **ppRet){
   list_class = islist(ptr, &indent, f->flags, &list_type);
   if( list_class == AL ){
       ParagraphRoot d = {0, 0};
-	  Paragraph *p = Pp(&d, ptr, list_type);  //!attention : third-param
+	  Paragraph *p = Pp(&d, ptr, list_type);
       Line *inner = NULL;
       int z;
       Line *q, *text;
@@ -1439,18 +1536,19 @@ extract_raw(Line *ptr, MMIOT *f, char **ppRet){
 
 	    if ( (q = skipempty(text)) == 0
              || islist(q, &indent, f->flags, &z) != list_class ){
+          *ptr = *q;
 	      break;
         }
       }
   }else if( list_class == DL ){
       ParagraphRoot d = {0, 0};
-	  Paragraph *p = Pp(&d, ptr, list_class);  // !!attention : third-param
+	  Paragraph *p = Pp(&d, ptr, list_class);
       Line *q, *labels, *text = 0;
-      int z, kind;
+      int z;
 
       q = p->text;
       while( (labels = q) ){
-        if( (q = isdefinition(labels, &z, &kind)) == 0 ){
+        if( (q = isdefinition(labels, &z, &list_type)) == 0 ){
           break;
         }
         if( q != labels ){
@@ -1485,7 +1583,7 @@ extract_raw(Line *ptr, MMIOT *f, char **ppRet){
           if( (_q->dle < indent)
               && (ishr(_q)
                   || islist(_q, &_z, f->flags,&_z)
-                  || (kind == 2 && is_extra_dd(_q)))
+                  || (list_type == 2 && is_extra_dd(_q)))
               && !issetext(_q, &_z) ){
             text = _t->next;
               break;
@@ -1496,12 +1594,11 @@ extract_raw(Line *ptr, MMIOT *f, char **ppRet){
         if( (q = skipempty(text)) == 0 ){
           break;
         }
-        if( kind == 2 && is_extra_dd(q) ){
+        if( list_type == 2 && is_extra_dd(q) ){
           goto dd_block;
         }
       }
   }else{
-
     while(tmp != NULL && tmp->text.size > 0){
       length += tmp->text.size;
       length += 1;  // '\n'
@@ -1598,57 +1695,30 @@ extract_html(Line *ptr, MMIOT *f, char **ppRet){
 }
 
 void
-set_paragraph(Line *ptr, MMIOT *f,int num, int blocks)
+insert_replace_string()
 {
-    char *ret = NULL;
-    char *tmp = NULL;
-    int mem_leng;
     Line line;
 
-    if( blocks == num ){
-        if( g_str != NULL && strlen(g_str) > 0){
-            line.text.text = g_str;
-            line.text.size = strlen(g_str);
-            g_length = _mem_buffer(&g_ret, g_length, &line);
-            /*
-            mem_leng = strlen(g_str);
-            if( g_ret == NULL && g_length == 0){
-                g_ret = (char*)calloc(mem_leng + 2, sizeof(char));
-            }else{
-                tmp = g_ret;
-                g_ret = (char*)calloc(g_length + mem_leng + 2, sizeof(char));
-                memcpy((void*)g_ret, (void*)tmp, g_length);
-                free(tmp);
-            }
-            memcpy((void*)(g_ret + g_length), (void*)g_str, mem_leng);
-            g_ret[g_length + mem_leng++] = '\n';
-            g_ret[g_length + mem_leng] = '\0';
-            g_length += mem_leng;
-            */
-        }
-    }else{
-        mem_leng = extract_raw(ptr, f, &ret);
-
-        line.text.text = ret;
-        line.text.size = mem_leng;
+    if( g_str != NULL && strlen(g_str) > 0){
+        line.text.text = g_str;
+        line.text.size = strlen(g_str);
         g_length = _mem_buffer(&g_ret, g_length, &line);
-        /*
-        if( g_ret == NULL && g_length == 0){
-            g_ret = (char*)calloc(mem_leng + 1, sizeof(char));
-        }else{
-            tmp = g_ret;
-            g_ret = (char*)calloc(g_length + mem_leng + 1, sizeof(char));
-            memcpy((void*)g_ret, (void*)tmp, g_length);
-            free(tmp);
-        }
-        memcpy((void*)(g_ret + g_length), (void*)ret, mem_leng);
-        g_length += mem_leng;
-        *(g_ret + g_length) = '\0';
-        */
-
-        free(ret);
-        ret = NULL;
     }
+}
+
+void
+insert_raw_string(Line *ptr, MMIOT *f)
+{
+    char *ret;
+    Line  line;
+    int   mem_leng;
+
+    mem_leng = extract_raw(ptr, f, &ret);
+    line.text.text = ret;
+    line.text.size = mem_leng;
+    g_length = _mem_buffer(&g_ret, g_length, &line);
+
+    free(ret);
 }
 
 void
@@ -1682,15 +1752,12 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
   int para = toplevel;
   int blocks = 0;
   int hdr_type, list_type, list_class, indent;
-  int hitFlg = 0;
   int mem_leng;
 
   ptr = consume(ptr, &para);
 
   while ( ptr ) {
-    if( g_style == _style_get ){
-      if(blocks == num){
-        hitFlg = 1;
+    if( g_style == _style_get && blocks == num ){
         if( _type == _out_html ){            // OUTPUT HTML
           mem_leng = extract_html(ptr, f, &g_ret);
         }else{// if( _type == _out_raw ){    // OUTPUT RAW
@@ -1698,14 +1765,16 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
         }
         g_length = mem_leng;
         return T(d);
-      }
-    }else if( g_style == _style_alter ){     // ALTER PARAGRAPH
-      set_paragraph(ptr, f, num, blocks);
+    }else if( g_style == _style_alter && blocks == num ){     // ALTER PARAGRAPH
+      insert_replace_string();
     }else if( g_style == _style_paragraph ){ // OUTPUT PARAGRAPH
       set_mddog_paragraph(ptr, f);
     }
 
 	if ( iscode(ptr) ) {
+      if( g_style == _style_alter && blocks != num ){
+        insert_raw_string(ptr, f);
+      }
       p = Pp(&d, ptr, CODE);
 	    
       if ( f->flags & MKD_1_COMPAT) {
@@ -1718,32 +1787,67 @@ compile_mddog(Line *ptr, int toplevel, MMIOT *f, int num, out_type _type)
       ptr = codeblock(p);
 	}
 	else if ( ishr(ptr) ) {
+      if( g_style == _style_alter && blocks != num){
+        insert_raw_string(ptr, f);
+      }
       p = Pp(&d, 0, HR);
       r = ptr;
       ptr = ptr->next;
       ___mkd_freeLine(r);
 	}
 	else if ( list_class = islist(ptr, &indent, f->flags, &list_type) ) {
-      if ( list_class == DL ) {
-		p = Pp(&d, ptr, DL);
-		ptr = definition_block(p, indent, f, list_type);
+        p = Pp(&d, ptr, list_class==DL?DL:list_type);
+      if( g_style == _style_alter && blocks != num && list_class == DL ){
+        ptr = insert_raw_list_dl(p, indent, f->flags, list_type);
+      }else if ( g_style == _style_alter && blocks != num && list_class == AL ){
+        ptr = insert_raw_list_al(p, indent, f->flags, list_class);
+      }else{
+        if ( list_class == DL ) {
+          ptr = definition_block(p, indent, f, list_type);
+        }
+        else {
+          ptr = enumerated_block(p, indent, f, list_class);
+        }
       }
-      else {
-		p = Pp(&d, ptr, list_type);
-		ptr = enumerated_block(p, indent, f, list_class);
+
+      /*
+      Cstring pStr = ptr->text;
+      if( g_style == _style_alter && blocks != num ){
+          insert_raw_string(ptr, f);
       }
+
+      if( (void*)pStr.text == (void*)ptr->text.text ){
+        p = Pp(&d, ptr, list_class==DL?DL:list_type);
+        if ( list_class == DL ) {
+          ptr = definition_block(p, indent, f, list_type);
+        }
+        else {
+          ptr = enumerated_block(p, indent, f, list_class);
+        }
+      }
+*/
 	}
 	else if ( isquote(ptr) ) {
+      if( g_style == _style_alter && blocks != num ){
+        insert_raw_string(ptr, f);
+      }
       p = Pp(&d, ptr, QUOTE);
       ptr = quoteblock(p, f->flags);
       p->down = compile(p->text, 1, f);
       p->text = 0;
 	}
 	else if ( ishdr(ptr, &hdr_type) ) {
+      if( g_style == _style_alter && blocks != num ){
+        insert_raw_string(ptr, f);
+      }
       p = Pp(&d, ptr, HDR);
       ptr = headerblock(p, hdr_type);
 	}
 	else {
+      if( g_style == _style_alter && blocks != num ){
+        insert_raw_string(ptr, f);
+      }
+
       p = Pp(&d, ptr, MARKUP);
       ptr = textblock(p, toplevel, f->flags);
       /* tables are a special kind of paragraph */
@@ -1888,14 +1992,36 @@ mddog_get_paragraph_raw(const char *text, DWORD flags, int num, char **ppRet)
     return g_length;
 }
 
+/*
+ * require calling 'free' for return value after using it.
+ */
+char
+*sharpen_str(const char *str)
+{
+  int str_length = strlen(str);
+  char* str_edit = (char*)calloc(str_length + 2, sizeof(char));
+  memcpy(str_edit, str, str_length);
+  int n = str_length;
+  while( --n >= 0 ){
+      if( str_edit[n] == '\n' ){
+        str_edit[n] = '\0';
+      }else{
+        break;
+      }
+  }
+  return str_edit;
+}
+
 int
 mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, char **ppRet)
 {
     Document* doc = mkd_string(text, strlen(text), flags);
     if( doc == NULL )    return 0;
 
+    char *str_edit = sharpen_str(str);
+
     g_style  = _style_alter;
-    g_str    = str;
+    g_str    = str_edit;
     g_length = 0;
     g_ret    = NULL;
 
@@ -1908,14 +2034,16 @@ mddog_alter_paragraph(const char *text, DWORD flags, int num, const char *str, c
     mkd_initialize();
     if( T(doc->content) != NULL ){
         doc->code = mddog_compile_document(T(doc->content), doc->ctx, num, _out_raw);
-    }else if( str != NULL && strlen(str) > 0 ){
-      g_length = strlen(str);
-      g_ret = (char*)calloc(g_length + 1, sizeof(char));
-      memcpy((void*)g_ret, (void*)str, g_length);
-      *(g_ret + g_length) = '\0';
+    }else if( str_edit != NULL && strlen(str_edit) > 0 ){
+      Line line;
+      line.text.text = str_edit;
+      line.text.size = strlen(str_edit);
+      g_length = _mem_buffer(&g_ret, g_length, &line);
     }
     memset(&doc->content, 0, sizeof doc->content);
     mkd_cleanup(doc);
+
+    free(str_edit);
 
     if( g_ret == NULL ){
         g_ret = calloc(1, sizeof(char));
