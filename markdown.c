@@ -1428,6 +1428,7 @@ mddog_cleanup(){
   if( g_ret != NULL ){
     free(g_ret);
     g_ret = NULL;
+    g_length = 0;
   }
 
   if( g_mddog != NULL ){
@@ -1444,9 +1445,9 @@ mddog_cleanup(){
 void
 insert_blank_line(){
   Line line;
-  char cr[] = "\r";
-  line.text.text = cr;
-  line.text.size = strlen(cr);
+  char lf[] = "";
+  line.text.text = lf;
+  line.text.size = strlen(lf);
   g_length = _mem_buffer(&g_ret, g_length, &line);
 }
 
@@ -1559,6 +1560,10 @@ void
 set_mddog_paragraph(Line *ptr, MMIOT *f)
 {
     static MDDOG_PARAGRAPH *md_para = NULL;
+
+    if( g_ret == NULL ){
+      return;
+    }
 
     if( md_para == NULL ){
         md_para = (MDDOG_PARAGRAPH*)calloc(sizeof(MDDOG_PARAGRAPH), 1);
