@@ -1753,8 +1753,7 @@ mddog_get_paragraph_html(const char *text, DWORD flags, int num, char **ppRet)
         return 0;
     }
 
-    g_length   = 0;
-    g_ret      = NULL;
+    g_style = _style_get;
     g_out_type = _out_html;
     g_para_num = num;
 
@@ -1787,8 +1786,7 @@ mddog_get_paragraph_raw(const char *text, DWORD flags, int num, char **ppRet)
         return 0;
     }
 
-    g_length   = 0;
-    g_ret      = NULL;
+    g_style = _style_get;
     g_out_type = _out_raw;
     g_para_num = num;
 
